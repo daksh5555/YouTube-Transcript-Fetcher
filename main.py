@@ -1,8 +1,28 @@
 from flask import Flask, request, jsonify, render_template_string
 from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api._errors import NoTranscriptFound, TranscriptsDisabled, VideoUnavailable
+from youtube_transcript_api.proxies import WebshareProxyConfig
+import os
 
 app = Flask(__name__)
+
+# Configure proxy if credentials are available
+WEBSHARE_USERNAME = os.getenv('WEBSHARE_USERNAME')
+WEBSHARE_PASSWORD = os.getenv('WEBSHARE_PASSWORD')
+
+def get_youtube_api():
+    """Get YouTubeTranscriptApi instance with or without proxy"""
+    if WEBSHARE_USERNAME and WEBSHARE_PASSWORD:
+        print("Using Webshare proxy configuration")
+        return YouTubeTranscriptApi(
+            proxy_config=WebshareProxyConfig(
+                proxy_username=WEBSHARE_USERNAME,
+                proxy_password=WEBSHARE_PASSWORD,
+            )
+        )
+    else:
+        print("No proxy configured - may encounter IP blocks")
+        return YouTubeTranscriptApi()
 
 # HTML template for the home page
 HOME_PAGE = '''
@@ -304,7 +324,7 @@ def get_available_languages():
         print(f"Fetching languages for video_id: {video_id}")
         
         # Create API instance and list transcripts
-        ytt_api = YouTubeTranscriptApi()
+        ytt_api = get_youtube_api()
         transcript_list = ytt_api.list(video_id)
         
         languages = []
@@ -336,7 +356,7 @@ def get_transcript():
         print(f"Fetching transcript for video_id: {video_id}, language: {lang}")
         
         # Create API instance and fetch transcript
-        ytt_api = YouTubeTranscriptApi()
+        ytt_api = get_youtube_api()
         fetched_transcript = ytt_api.fetch(video_id, languages=[lang])
         
         # Combine all text entries
