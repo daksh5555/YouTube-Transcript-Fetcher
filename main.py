@@ -12,6 +12,7 @@ def get_available_languages():
         return jsonify({"error": "Missing video_id"}), 400
 
     try:
+        print("video_id received:", video_id)
         transcript_info = YouTubeTranscriptApi.list(video_id)
         languages = [
             {"code": t.language_code, "name": t.language}
