@@ -1,28 +1,101 @@
 from flask import Flask, request, jsonify, render_template_string
 from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api._errors import NoTranscriptFound, TranscriptsDisabled, VideoUnavailable
-from youtube_transcript_api.proxies import WebshareProxyConfig
+from youtube_transcript_api.proxies import GenericProxyConfig
 import os
+import requests
+import random
+import time
 
 app = Flask(__name__)
 
-# Configure proxy if credentials are available
-WEBSHARE_USERNAME = os.getenv('WEBSHARE_USERNAME')
-WEBSHARE_PASSWORD = os.getenv('WEBSHARE_PASSWORD')
+# Cache for proxies
+PROXY_CACHE = []
+LAST_PROXY_FETCH = 0
+PROXY_CACHE_DURATION = 300  # Refresh proxies every 5 minutes
+
+def fetch_free_proxies():
+    """Fetch a list of free proxies from multiple sources"""
+    global PROXY_CACHE, LAST_PROXY_FETCH
+    
+    current_time = time.time()
+    
+    # Return cached proxies if still fresh
+    if PROXY_CACHE and (current_time - LAST_PROXY_FETCH) < PROXY_CACHE_DURATION:
+        return PROXY_CACHE
+    
+    print("Fetching fresh proxy list...")
+    proxies = []
+    
+    # Multiple free proxy sources
+    proxy_sources = [
+        "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all",
+        "https://www.proxy-list.download/api/v1/get?type=http",
+        "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
+        "https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt",
+        "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
+    ]
+    
+    for source in proxy_sources:
+        try:
+            response = requests.get(source, timeout=5)
+            if response.status_code == 200:
+                proxy_list = response.text.strip().split('\n')
+                proxies.extend([p.strip() for p in proxy_list if p.strip()])
+                print(f"Fetched {len(proxy_list)} proxies from {source}")
+        except Exception as e:
+            print(f"Failed to fetch from {source}: {e}")
+    
+    # Remove duplicates
+    proxies = list(set(proxies))
+    
+    if proxies:
+        PROXY_CACHE = proxies
+        LAST_PROXY_FETCH = current_time
+        print(f"Total proxies in cache: {len(PROXY_CACHE)}")
+        return PROXY_CACHE
+    
+    return []
+
+def get_youtube_api_with_retry(max_attempts=5):
+    """Try multiple proxies until one works"""
+    proxies = fetch_free_proxies()
+    
+    if not proxies:
+        print("No proxies available, trying without proxy")
+        return YouTubeTranscriptApi()
+    
+    # Try multiple random proxies
+    for attempt in range(min(max_attempts, len(proxies))):
+        try:
+            proxy = random.choice(proxies)
+            proxy_url = f"http://{proxy}" if not proxy.startswith('http') else proxy
+            
+            print(f"Attempt {attempt + 1}: Trying proxy {proxy}")
+            
+            api = YouTubeTranscriptApi(
+                proxy_config=GenericProxyConfig(
+                    http_url=proxy_url,
+                    https_url=proxy_url,
+                )
+            )
+            
+            return api
+            
+        except Exception as e:
+            print(f"Proxy {proxy} failed: {e}")
+            # Remove failed proxy from cache
+            if proxy in PROXY_CACHE:
+                PROXY_CACHE.remove(proxy)
+            continue
+    
+    # Fallback to no proxy if all attempts fail
+    print("All proxy attempts failed, trying without proxy")
+    return YouTubeTranscriptApi()
 
 def get_youtube_api():
-    """Get YouTubeTranscriptApi instance with or without proxy"""
-    if WEBSHARE_USERNAME and WEBSHARE_PASSWORD:
-        print("Using Webshare proxy configuration")
-        return YouTubeTranscriptApi(
-            proxy_config=WebshareProxyConfig(
-                proxy_username=WEBSHARE_USERNAME,
-                proxy_password=WEBSHARE_PASSWORD,
-            )
-        )
-    else:
-        print("No proxy configured - may encounter IP blocks")
-        return YouTubeTranscriptApi()
+    """Get YouTubeTranscriptApi instance with proxy rotation"""
+    return get_youtube_api_with_retry(max_attempts=5)
 
 # HTML template for the home page
 HOME_PAGE = '''
